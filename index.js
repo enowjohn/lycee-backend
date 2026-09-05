@@ -18,7 +18,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: process.env.CLIENTURL || process.env.CLIENT_URL || "http://localhost:5173",
+    origin: process.env.FRONTEND_URL || process.env.CLIENTURL || process.env.CLIENT_URL || "http://localhost:5173",
     methods: ["GET", "POST"],
     credentials: true
   }
@@ -26,7 +26,7 @@ const io = socketIo(server, {
 
 // Middleware
 app.use(cors({
-  origin: process.env.CLIENTURL || process.env.CLIENT_URL || "http://localhost:5173",
+  origin: process.env.FRONTEND_URL || process.env.CLIENTURL || process.env.CLIENT_URL || "http://localhost:5173",
   credentials: true
 }));
 app.use(express.json());
