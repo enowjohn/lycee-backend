@@ -50,7 +50,7 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage: storage,
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
@@ -306,7 +306,7 @@ function initializeDatabase() {
       console.log('Error adding teacher_name column:', err.message);
     }
   });
-  
+
   db.run(`ALTER TABLE assignments ADD COLUMN subject_name TEXT`, (err) => {
     if (err && !err.message.includes('duplicate column')) {
       console.log('Error adding subject_name column:', err.message);
@@ -367,25 +367,25 @@ io.on('connection', (socket) => {
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, password, role, first_name, last_name } = req.body;
-    
+
     // Check if user exists
     db.get('SELECT id FROM users WHERE email = ?', [email], async (err, user) => {
       if (err) return res.status(500).json({ error: err.message });
       if (user) return res.status(400).json({ error: 'User already exists' });
 
       const hashedPassword = await bcrypt.hash(password, 10);
-      
+
       db.run('INSERT INTO users (email, password, role, first_name, last_name) VALUES (?, ?, ?, ?, ?)',
         [email, hashedPassword, role, first_name, last_name],
         function(err) {
           if (err) return res.status(500).json({ error: err.message });
-          
+
           const token = jwt.sign(
             { id: this.lastID, email, role },
             process.env.JWT_SECRET || 'your-secret-key',
             { expiresIn: '24h' }
           );
-          
+
           res.status(201).json({ token, user: { id: this.lastID, email, role, first_name, last_name } });
         }
       );
@@ -398,7 +398,7 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    
+
     db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
       if (err) return res.status(500).json({ error: err.message });
       if (!user) return res.status(400).json({ error: 'Invalid credentials' });
@@ -411,16 +411,16 @@ app.post('/api/auth/login', async (req, res) => {
         process.env.JWT_SECRET || 'your-secret-key',
         { expiresIn: '24h' }
       );
-      
-      res.json({ 
-        token, 
-        user: { 
-          id: user.id, 
-          email: user.email, 
-          role: user.role, 
-          first_name: user.first_name, 
-          last_name: user.last_name 
-        } 
+
+      res.json({
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          first_name: user.first_name,
+          last_name: user.last_name
+        }
       });
     });
   } catch (error) {
@@ -471,7 +471,7 @@ app.get('/api/students', authenticateToken, (req, res) => {
 
 app.post('/api/students', authenticateToken, (req, res) => {
   const { student_id, first_name, last_name, date_of_birth, gender, address, parent_phone, parent_email, class_level, stream, admission_date } = req.body;
-  
+
   db.run(`INSERT INTO students (student_id, first_name, last_name, date_of_birth, gender, address, parent_phone, parent_email, class_level, stream, admission_date)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [student_id, first_name, last_name, date_of_birth, gender, address, parent_phone, parent_email, class_level, stream, admission_date],
@@ -484,8 +484,8 @@ app.post('/api/students', authenticateToken, (req, res) => {
 
 app.put('/api/students/:id', authenticateToken, (req, res) => {
   const { first_name, last_name, date_of_birth, gender, address, parent_phone, parent_email, class_level, stream, status } = req.body;
-  
-  db.run(`UPDATE students SET first_name = ?, last_name = ?, date_of_birth = ?, gender = ?, address = ?, 
+
+  db.run(`UPDATE students SET first_name = ?, last_name = ?, date_of_birth = ?, gender = ?, address = ?,
           parent_phone = ?, parent_email = ?, class_level = ?, stream = ?, status = ? WHERE id = ?`,
     [first_name, last_name, date_of_birth, gender, address, parent_phone, parent_email, class_level, stream, status, req.params.id],
     function(err) {
@@ -506,7 +506,7 @@ app.get('/api/teachers', (req, res) => {
 app.post('/api/teachers', authenticateToken, upload.single('photo'), (req, res) => {
   const { teacher_id, first_name, last_name, subject, department, phone, email, qualification, hire_date } = req.body;
   const photo = req.file ? req.file.filename : null;
-  
+
   db.run(`INSERT INTO teachers (teacher_id, first_name, last_name, subject, department, phone, email, qualification, photo, hire_date)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [teacher_id, first_name, last_name, subject, department, phone, email, qualification, photo, hire_date],
@@ -527,7 +527,7 @@ app.get('/api/subjects', (req, res) => {
 
 app.post('/api/subjects', authenticateToken, (req, res) => {
   const { name, code, stream, class_level, description } = req.body;
-  
+
   db.run('INSERT INTO subjects (name, code, stream, class_level, description) VALUES (?, ?, ?, ?, ?)',
     [name, code, stream, class_level, description],
     function(err) {
@@ -540,7 +540,7 @@ app.post('/api/subjects', authenticateToken, (req, res) => {
 // Marks routes
 app.get('/api/marks/student/:studentId', authenticateToken, (req, res) => {
   const { term, year } = req.query;
-  let query = `SELECT m.*, s.name as subject_name, s.code as subject_code, t.first_name as teacher_first_name, 
+  let query = `SELECT m.*, s.name as subject_name, s.code as subject_code, t.first_name as teacher_first_name,
                 t.last_name as teacher_last_name FROM marks m
                 JOIN subjects s ON m.subject_id = s.id
                 JOIN teachers t ON m.teacher_id = t.id
@@ -565,10 +565,10 @@ app.get('/api/marks/student/:studentId', authenticateToken, (req, res) => {
 
 app.post('/api/marks', authenticateToken, (req, res) => {
   const { student_id, subject_id, teacher_id, term, year, assignment_marks, mid_term_marks, final_marks, comments } = req.body;
-  
+
   const total_marks = (assignment_marks || 0) + (mid_term_marks || 0) + (final_marks || 0);
   let grade = 'F';
-  
+
   if (total_marks >= 80) grade = 'A';
   else if (total_marks >= 70) grade = 'B';
   else if (total_marks >= 60) grade = 'C';
@@ -588,8 +588,8 @@ app.post('/api/marks', authenticateToken, (req, res) => {
 // Messages routes
 app.get('/api/messages', authenticateToken, (req, res) => {
   const userId = req.user.id;
-  
-  db.all(`SELECT m.*, u1.first_name as sender_first_name, u1.last_name as sender_last_name, 
+
+  db.all(`SELECT m.*, u1.first_name as sender_first_name, u1.last_name as sender_last_name,
           u2.first_name as receiver_first_name, u2.last_name as receiver_last_name
           FROM messages m
           JOIN users u1 ON m.sender_id = u1.id
@@ -606,16 +606,16 @@ app.get('/api/messages', authenticateToken, (req, res) => {
 
 app.post('/api/messages', authenticateToken, (req, res) => {
   const { receiver_id, subject, message } = req.body;
-  
+
   db.run('INSERT INTO messages (sender_id, receiver_id, subject, message) VALUES (?, ?, ?, ?)',
     [req.user.id, receiver_id, subject, message],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      
+
       // Create notification for receiver
       db.run('INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
         [receiver_id, 'New Message', subject || 'You have a new message', 'general']);
-      
+
       res.status(201).json({ id: this.lastID });
     }
   );
@@ -651,12 +651,12 @@ app.get('/api/announcements', (req, res) => {
 
 app.post('/api/announcements', authenticateToken, (req, res) => {
   const { title, content, priority } = req.body;
-  
+
   db.run('INSERT INTO announcements (title, content, author_id, priority) VALUES (?, ?, ?, ?)',
     [title, content, req.user.id, priority],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      
+
       // Notify all users
       db.all('SELECT id FROM users', [], (err, users) => {
         if (!err && users) {
@@ -666,7 +666,7 @@ app.post('/api/announcements', authenticateToken, (req, res) => {
           });
         }
       });
-      
+
       res.status(201).json({ id: this.lastID });
     }
   );
@@ -684,7 +684,7 @@ app.get('/api/events', (req, res) => {
 
 app.post('/api/events', authenticateToken, (req, res) => {
   const { title, description, event_date, event_time, location, type } = req.body;
-  
+
   db.run('INSERT INTO events (title, description, event_date, event_time, location, type) VALUES (?, ?, ?, ?, ?, ?)',
     [title, description, event_date, event_time, location, type],
     function(err) {
@@ -697,7 +697,7 @@ app.post('/api/events', authenticateToken, (req, res) => {
 // Video sessions routes
 app.get('/api/video-sessions', authenticateToken, (req, res) => {
   const { class_level, subject_id } = req.query;
-  let query = `SELECT vs.*, s.name as subject_name, t.first_name as teacher_first_name, t.last_name as teacher_last_name 
+  let query = `SELECT vs.*, s.name as subject_name, t.first_name as teacher_first_name, t.last_name as teacher_last_name
                FROM video_sessions vs
                JOIN subjects s ON vs.subject_id = s.id
                JOIN teachers t ON vs.teacher_id = t.id
@@ -725,7 +725,7 @@ app.get('/api/video-sessions', authenticateToken, (req, res) => {
 app.post('/api/video-sessions', authenticateToken, (req, res) => {
   const { title, description, teacher_id, subject_id, class_level, scheduled_date, duration } = req.body;
   const meeting_id = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-  
+
   db.run(`INSERT INTO video_sessions (title, description, teacher_id, subject_id, class_level, scheduled_date, duration, meeting_id)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [title, description, teacher_id, subject_id, class_level, scheduled_date, duration, meeting_id],
@@ -738,7 +738,7 @@ app.post('/api/video-sessions', authenticateToken, (req, res) => {
 
 app.put('/api/video-sessions/:id/status', authenticateToken, (req, res) => {
   const { status, recording_url } = req.body;
-  
+
   db.run('UPDATE video_sessions SET status = ?, recording_url = ? WHERE id = ?',
     [status, recording_url, req.params.id],
     function(err) {
@@ -751,7 +751,7 @@ app.put('/api/video-sessions/:id/status', authenticateToken, (req, res) => {
 // Attendance routes
 app.post('/api/attendance', authenticateToken, (req, res) => {
   const { student_id, session_id, status } = req.body;
-  
+
   db.run(`INSERT INTO attendance (student_id, session_id, join_time, status)
           VALUES (?, ?, datetime('now'), ?)`,
     [student_id, session_id, status],
@@ -764,7 +764,7 @@ app.post('/api/attendance', authenticateToken, (req, res) => {
 
 app.put('/api/attendance/:id', authenticateToken, (req, res) => {
   const { leave_time, duration } = req.body;
-  
+
   db.run('UPDATE attendance SET leave_time = ?, duration = ? WHERE id = ?',
     [leave_time, duration, req.params.id],
     function(err) {
@@ -778,7 +778,7 @@ app.put('/api/attendance/:id', authenticateToken, (req, res) => {
 app.post('/api/applications', (req, res) => {
   const { first_name, last_name, date_of_birth, gender, previous_school, parent_name, parent_phone, parent_email, address, stream_preference, class_level } = req.body;
   const application_number = 'APP' + Date.now();
-  
+
   db.run(`INSERT INTO applications (application_number, first_name, last_name, date_of_birth, gender, previous_school, parent_name, parent_phone, parent_email, address, stream_preference, class_level)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [application_number, first_name, last_name, date_of_birth, gender, previous_school, parent_name, parent_phone, parent_email, address, stream_preference, class_level],
@@ -819,7 +819,7 @@ app.get('/api/gallery', (req, res) => {
 app.post('/api/gallery', authenticateToken, upload.single('file'), (req, res) => {
   const { title, description, category } = req.body;
   const file_type = req.file.mimetype.startsWith('video') ? 'video' : 'image';
-  
+
   db.run('INSERT INTO gallery (title, description, file_path, file_type, category, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)',
     [title, description, req.file.filename, file_type, category, req.user.id],
     function(err) {
@@ -842,7 +842,7 @@ app.get('/api/fees/student/:studentId', authenticateToken, (req, res) => {
 
 app.post('/api/fees', authenticateToken, (req, res) => {
   const { student_id, term, year, amount, due_date } = req.body;
-  
+
   db.run('INSERT INTO fees (student_id, term, year, amount, balance, due_date) VALUES (?, ?, ?, ?, ?, ?)',
     [student_id, term, year, amount, amount, due_date],
     function(err) {
@@ -855,7 +855,7 @@ app.post('/api/fees', authenticateToken, (req, res) => {
 // Contact form route
 app.post('/api/contact', async (req, res) => {
   const { name, email, subject, message } = req.body;
-  
+
   try {
     // Store in database (optional)
     // Send email notification
@@ -883,7 +883,7 @@ app.post('/api/contact', async (req, res) => {
 
 // Assignment routes
 app.get('/api/assignments', (req, res) => {
-  const query = `SELECT a.*, s.name as subject_name, t.first_name as teacher_first_name, t.last_name as teacher_last_name 
+  const query = `SELECT a.*, s.name as subject_name, t.first_name as teacher_first_name, t.last_name as teacher_last_name
                FROM assignments a
                LEFT JOIN subjects s ON a.subject_id = s.id
                LEFT JOIN teachers t ON a.teacher_id = t.id
@@ -929,13 +929,13 @@ app.get('/api/assignments/:id', authenticateToken, (req, res) => {
 app.post('/api/assignments', upload.single('file'), (req, res) => {
   console.log('Creating assignment with data:', req.body);
   console.log('File:', req.file);
-  
+
   const { teacher_name, subject_name, subject_id, class_level, stream, title, description, due_date, total_marks } = req.body;
   const file_path = req.file ? req.file.filename : null;
-  
+
   // For demo purposes, use teacher_id = 1 if no authentication
   const teacherId = 1;
-  
+
   db.run(`INSERT INTO assignments (teacher_id, teacher_name, subject_id, subject_name, class_level, stream, title, description, file_path, due_date, total_marks)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [teacherId, teacher_name, subject_id, subject_name, class_level, stream, title, description, file_path, due_date, total_marks],
@@ -944,9 +944,9 @@ app.post('/api/assignments', upload.single('file'), (req, res) => {
         console.error('Error creating assignment:', err.message);
         return res.status(500).json({ error: err.message });
       }
-      
+
       console.log('Assignment created with ID:', this.lastID);
-      
+
       // Notify students in the class
       db.all('SELECT user_id FROM students WHERE class_level = ? AND (stream = ? OR stream = "both")',
         [class_level, stream],
@@ -959,7 +959,7 @@ app.post('/api/assignments', upload.single('file'), (req, res) => {
           }
         }
       );
-      
+
       res.status(201).json({ id: this.lastID });
     }
   );
@@ -982,7 +982,7 @@ app.get('/api/assignments/:id/submissions', authenticateToken, (req, res) => {
 app.post('/api/assignments/:id/submit', authenticateToken, upload.single('file'), (req, res) => {
   const { submission_text } = req.body;
   const file_path = req.file ? req.file.filename : null;
-  
+
   // Get student_id from user_id
   db.get('SELECT id FROM students WHERE user_id = ?', [req.user.id], (err, student) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -1000,7 +1000,7 @@ app.post('/api/assignments/:id/submit', authenticateToken, upload.single('file')
           [req.params.id, student.id, submission_text, file_path],
           function(err) {
             if (err) return res.status(500).json({ error: err.message });
-            
+
             // Notify teacher
             db.get('SELECT user_id FROM assignments a JOIN teachers t ON a.teacher_id = t.id WHERE a.id = ?',
               [req.params.id],
@@ -1011,7 +1011,7 @@ app.post('/api/assignments/:id/submit', authenticateToken, upload.single('file')
                 }
               }
             );
-            
+
             res.status(201).json({ id: this.lastID });
           }
         );
@@ -1023,15 +1023,15 @@ app.post('/api/assignments/:id/submit', authenticateToken, upload.single('file')
 app.put('/api/assignments/:id', upload.single('file'), (req, res) => {
   const { teacher_name, subject_name, subject_id, class_level, stream, title, description, due_date, total_marks } = req.body;
   const file_path = req.file ? req.file.filename : null;
-  
-  const updateQuery = file_path 
+
+  const updateQuery = file_path
     ? `UPDATE assignments SET teacher_name = ?, subject_id = ?, subject_name = ?, class_level = ?, stream = ?, title = ?, description = ?, file_path = ?, due_date = ?, total_marks = ? WHERE id = ?`
     : `UPDATE assignments SET teacher_name = ?, subject_id = ?, subject_name = ?, class_level = ?, stream = ?, title = ?, description = ?, due_date = ?, total_marks = ? WHERE id = ?`;
-  
+
   const params = file_path
     ? [teacher_name, subject_id, subject_name, class_level, stream, title, description, file_path, due_date, total_marks, req.params.id]
     : [teacher_name, subject_id, subject_name, class_level, stream, title, description, due_date, total_marks, req.params.id];
-  
+
   db.run(updateQuery, params, function(err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ message: 'Assignment updated successfully' });
@@ -1047,19 +1047,19 @@ app.delete('/api/assignments/:id', authenticateToken, (req, res) => {
 
 app.put('/api/assignments/:id/grade', authenticateToken, (req, res) => {
   const { submission_id, marks, grade, feedback, status } = req.body;
-  
+
   const finalStatus = status || 'graded';
   const notificationMessage = status === 'approved' ? 'Your assignment has been approved!' :
                             status === 'rejected' ? 'Your assignment needs changes. Please review feedback.' :
                             status === 'failed' ? 'Your assignment has been marked as failed.' :
                             `Your assignment has been graded. Grade: ${grade}`;
-  
+
   db.run(`UPDATE assignment_submissions SET marks = ?, grade = ?, feedback = ?, status = ?
           WHERE id = ?`,
     [marks, grade, feedback, finalStatus, submission_id],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      
+
       // Notify student
       db.get('SELECT user_id FROM assignment_submissions ass JOIN students st ON ass.student_id = st.id WHERE ass.id = ?',
         [submission_id],
@@ -1070,7 +1070,7 @@ app.put('/api/assignments/:id/grade', authenticateToken, (req, res) => {
           }
         }
       );
-      
+
       res.json({ message: 'Submission updated successfully' });
     }
   );
@@ -1101,7 +1101,7 @@ app.get('/api/statistics', authenticateToken, (req, res) => {
     'SELECT COUNT(*) as count FROM video_sessions WHERE status = "scheduled"'
   ];
 
-  Promise.all(queries.map(query => 
+  Promise.all(queries.map(query =>
     new Promise((resolve, reject) => {
       db.get(query, (err, row) => {
         if (err) reject(err);
@@ -1120,55 +1120,109 @@ app.get('/api/statistics', authenticateToken, (req, res) => {
   });
 });
 
+// ============================================================
 // AI Chat endpoint - Using Groq API with OpenAI SDK
+// ============================================================
+//
+// IMPORTANT: If this endpoint returns 500 errors, check your
+// terminal output. The error handling below prints a specific,
+// human-readable diagnosis for the most common failure modes:
+//   - Missing GROQ_API_KEY in .env
+//   - Invalid / revoked API key
+//   - Wrong or decommissioned model name
+//   - Rate limiting
+//
+// To get a fresh key: https://console.groq.com/keys
+// To see current supported models: https://console.groq.com/docs/models
+// ============================================================
+
+const GROQ_MODEL = 'openai/gpt-oss-20b'; // confirmed available via /v1/models for this account
+
 app.post('/api/ai/chat', async (req, res) => {
   const { message, conversationHistory } = req.body;
-  
+
+  if (!message || typeof message !== 'string' || !message.trim()) {
+    return res.status(400).json({ error: 'A non-empty "message" field is required.' });
+  }
+
+  const groqApiKey = process.env.GROQ_API_KEY;
+  if (!groqApiKey) {
+    console.error('GROQ_API_KEY is missing from environment variables.');
+    return res.status(500).json({ error: 'Groq API key not configured on the server.' });
+  }
+
+  const openai = new OpenAI({
+    apiKey: groqApiKey,
+    baseURL: 'https://api.groq.com/openai/v1'
+  });
+
+  const systemPrompt = 'You are John Enow AI, a helpful educational assistant for students. Answer questions directly, clearly, and accurately. Provide explanations, formulas, definitions, and examples when helpful. Be concise but thorough. If asked for a formula, provide it clearly. If asked for a definition, give a clear, accurate definition. Help students understand concepts across all subjects.';
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...(Array.isArray(conversationHistory) ? conversationHistory : []).map(msg => ({
+      role: msg.role === 'assistant' ? 'assistant' : 'user',
+      content: msg.content
+    })),
+    { role: 'user', content: message }
+  ];
+
   try {
-    const groqApiKey = process.env.GROQ_API_KEY;
-    if (!groqApiKey) {
-      return res.status(500).json({ error: 'Groq API key not configured' });
-    }
+    console.log(`Attempting Groq API call (model: ${GROQ_MODEL})...`);
 
-    const openai = new OpenAI({
-      apiKey: groqApiKey,
-      baseURL: 'https://api.groq.com/openai/v1'
-    });
-
-    const systemPrompt = 'You are John Enow AI, a helpful educational assistant for students. Answer questions directly, clearly, and accurately. Provide explanations, formulas, definitions, and examples when helpful. Be concise but thorough. If asked for a formula, provide it clearly. If asked for a definition, give a clear, accurate definition. Help students understand concepts across all subjects.';
-    
-    const messages = [
-      {
-        role: 'system',
-        content: systemPrompt
-      },
-      ...(conversationHistory || []).map(msg => ({
-        role: msg.role === 'assistant' ? 'assistant' : 'user',
-        content: msg.content
-      })),
-      {
-        role: 'user',
-        content: message
-      }
-    ];
-
-    console.log('Attempting Groq API call with OpenAI SDK...');
     const completion = await openai.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: GROQ_MODEL,
       messages: messages,
       max_tokens: 500,
       temperature: 0.7
     });
 
-    if (completion.choices && completion.choices[0]) {
-      res.json({ response: completion.choices[0].message.content });
-    } else {
-      res.status(500).json({ error: 'Invalid response from Groq API' });
+    const reply = completion?.choices?.[0]?.message?.content;
+    if (!reply) {
+      console.error('Groq API returned an unexpected response shape:', JSON.stringify(completion));
+      return res.status(500).json({ error: 'Invalid response from Groq API' });
     }
+
+    return res.json({ response: reply });
+
   } catch (error) {
-    console.error('Groq API error:', error.message);
-    console.error('Groq API error details:', error);
-    res.status(500).json({ error: 'Failed to get response from AI: ' + error.message });
+    // error.code comes from Groq's OpenAI-compatible error payload
+    const code = error?.code || error?.error?.code;
+    const status = error?.status;
+
+    console.error('--- Groq API error ---');
+    console.error('status:', status, '| code:', code);
+    console.error('message:', error.message);
+
+    if (code === 'invalid_api_key' || status === 401) {
+      console.error(
+        'DIAGNOSIS: Your GROQ_API_KEY is invalid or has been revoked.\n' +
+        'Fix: generate a new key at https://console.groq.com/keys and update your .env file, then restart the server.'
+      );
+      return res.status(500).json({
+        error: 'The AI service is not configured correctly (invalid API key). Please contact the site administrator.'
+      });
+    }
+
+    if (code === 'model_not_found' || code === 'model_decommissioned' || status === 404) {
+      console.error(
+        `DIAGNOSIS: The model "${GROQ_MODEL}" is not available on this account.\n` +
+        'Fix: open https://console.groq.com/docs/models to see currently supported models, ' +
+        'update the GROQ_MODEL constant near the top of the /api/ai/chat route, and restart the server.'
+      );
+      return res.status(500).json({
+        error: 'The AI service is temporarily using an unsupported model. Please contact the site administrator.'
+      });
+    }
+
+    if (status === 429) {
+      console.error('DIAGNOSIS: Rate limit hit on the Groq account. Wait and retry, or upgrade your Groq plan.');
+      return res.status(429).json({ error: 'The AI service is busy right now. Please try again in a moment.' });
+    }
+
+    // Fallback: unknown error, still log full details for debugging
+    console.error('Full error object:', error);
+    return res.status(500).json({ error: 'Failed to get a response from the AI service. Please try again.' });
   }
 });
 
@@ -1190,7 +1244,7 @@ io.on('connection', (socket) => {
   // Send private message
   socket.on('private_message', (data) => {
     const { senderId, receiverId, message, senderName } = data;
-    
+
     // Store message in database
     db.run(`INSERT INTO messages (sender_id, receiver_id, message, sender_name, created_at) VALUES (?, ?, ?, ?, datetime('now'))`,
       [senderId, receiverId, message, senderName],
@@ -1199,7 +1253,7 @@ io.on('connection', (socket) => {
           console.error('Error storing message:', err);
           return;
         }
-        
+
         // Send to receiver if online
         io.to(receiverId).emit('receive_message', {
           id: this.lastID,
@@ -1209,7 +1263,7 @@ io.on('connection', (socket) => {
           sender_name: senderName,
           created_at: new Date().toISOString()
         });
-        
+
         // Send confirmation to sender
         socket.emit('message_sent', {
           id: this.lastID,
@@ -1232,7 +1286,7 @@ io.on('connection', (socket) => {
   // Send class-wide message
   socket.on('class_message', (data) => {
     const { senderId, classLevel, message, senderName } = data;
-    
+
     db.run(`INSERT INTO class_messages (sender_id, class_level, message, sender_name, created_at) VALUES (?, ?, ?, ?, datetime('now'))`,
       [senderId, classLevel, message, senderName],
       function(err) {
@@ -1240,7 +1294,7 @@ io.on('connection', (socket) => {
           console.error('Error storing class message:', err);
           return;
         }
-        
+
         // Broadcast to class room
         io.to(`class_${classLevel}`).emit('receive_class_message', {
           id: this.lastID,
@@ -1263,8 +1317,8 @@ io.on('connection', (socket) => {
 app.get('/api/messages/:userId', authenticateToken, (req, res) => {
   const { userId } = req.params;
   const currentUserId = req.user.id;
-  
-  db.all(`SELECT * FROM messages 
+
+  db.all(`SELECT * FROM messages
           WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
           ORDER BY created_at ASC`,
     [currentUserId, userId, userId, currentUserId],
@@ -1277,11 +1331,11 @@ app.get('/api/messages/:userId', authenticateToken, (req, res) => {
 
 app.get('/api/messages/conversations', authenticateToken, (req, res) => {
   const currentUserId = req.user.id;
-  
-  db.all(`SELECT DISTINCT 
-          CASE 
-            WHEN sender_id = ? THEN receiver_id 
-            ELSE sender_id 
+
+  db.all(`SELECT DISTINCT
+          CASE
+            WHEN sender_id = ? THEN receiver_id
+            ELSE sender_id
           END as other_user_id,
           MAX(created_at) as last_message_time
           FROM messages
@@ -1298,7 +1352,7 @@ app.get('/api/messages/conversations', authenticateToken, (req, res) => {
 
 app.get('/api/class-messages/:classLevel', authenticateToken, (req, res) => {
   const { classLevel } = req.params;
-  
+
   db.all(`SELECT * FROM class_messages WHERE class_level = ? ORDER BY created_at ASC`,
     [classLevel],
     (err, messages) => {
