@@ -1154,7 +1154,7 @@ app.post('/api/ai/chat', async (req, res) => {
 
     console.log('Attempting Groq API call with OpenAI SDK...');
     const completion = await openai.chat.completions.create({
-      model: 'llama3-groq-8b-8192-tool-use-preview',
+      model: 'qwen-2.5-72b-instruct',
       messages: messages,
       max_tokens: 500,
       temperature: 0.7
