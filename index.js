@@ -90,7 +90,7 @@ function initializeDatabase() {
     parent_phone TEXT,
     parent_email TEXT,
     class_level TEXT,
-    stream TEXT CHECK(stream IN ('english', 'french')),
+    stream TEXT,
     admission_date DATE,
     status TEXT DEFAULT 'active',
     FOREIGN KEY (user_id) REFERENCES users(id)
@@ -253,6 +253,20 @@ function initializeDatabase() {
     submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  // Add photo column if it doesn't exist (for existing databases)
+  db.run(`ALTER TABLE applications ADD COLUMN photo TEXT`, (err) => {
+    if (err && !err.message.includes('duplicate column')) {
+      console.log('Error adding photo column to applications:', err.message);
+    }
+  });
+
+  // Add amount_paid column if it doesn't exist (for existing databases)
+  db.run(`ALTER TABLE applications ADD COLUMN amount_paid REAL`, (err) => {
+    if (err && !err.message.includes('duplicate column')) {
+      console.log('Error adding amount_paid column to applications:', err.message);
+    }
+  });
 
   // Gallery table
   db.run(`CREATE TABLE IF NOT EXISTS gallery (
@@ -443,6 +457,14 @@ function authenticateToken(req, res, next) {
 }
 
 // Student routes
+app.get('/api/students/me', authenticateToken, (req, res) => {
+  db.get('SELECT * FROM students WHERE user_id = ?', [req.user.id], (err, student) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!student) return res.status(404).json({ error: 'Student profile not found' });
+    res.json(student);
+  });
+});
+
 app.get('/api/students', authenticateToken, (req, res) => {
   const { search, stream, class_level } = req.query;
   let query = 'SELECT * FROM students WHERE status = "active"';
@@ -472,11 +494,30 @@ app.get('/api/students', authenticateToken, (req, res) => {
 app.post('/api/students', authenticateToken, (req, res) => {
   const { student_id, first_name, last_name, date_of_birth, gender, address, parent_phone, parent_email, class_level, stream, admission_date } = req.body;
 
-  db.run(`INSERT INTO students (student_id, first_name, last_name, date_of_birth, gender, address, parent_phone, parent_email, class_level, stream, admission_date)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [student_id, first_name, last_name, date_of_birth, gender, address, parent_phone, parent_email, class_level, stream, admission_date],
+  console.log('Creating student profile with data:', {
+    user_id: req.user.id,
+    student_id,
+    first_name,
+    last_name,
+    date_of_birth,
+    gender,
+    address,
+    parent_phone,
+    parent_email,
+    class_level,
+    stream,
+    admission_date
+  });
+
+  db.run(`INSERT INTO students (user_id, student_id, first_name, last_name, date_of_birth, gender, address, parent_phone, parent_email, class_level, stream, admission_date)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [req.user.id, student_id, first_name, last_name, date_of_birth, gender, address, parent_phone, parent_email, class_level, stream, admission_date],
     function(err) {
-      if (err) return res.status(500).json({ error: err.message });
+      if (err) {
+        console.error('Error creating student profile:', err.message);
+        return res.status(500).json({ error: err.message });
+      }
+      console.log('Student profile created with ID:', this.lastID);
       res.status(201).json({ id: this.lastID, ...req.body });
     }
   );
@@ -503,13 +544,21 @@ app.get('/api/teachers', (req, res) => {
   });
 });
 
+app.get('/api/teachers/me', authenticateToken, (req, res) => {
+  db.get('SELECT * FROM teachers WHERE user_id = ?', [req.user.id], (err, teacher) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!teacher) return res.status(404).json({ error: 'Teacher profile not found' });
+    res.json(teacher);
+  });
+});
+
 app.post('/api/teachers', authenticateToken, upload.single('photo'), (req, res) => {
   const { teacher_id, first_name, last_name, subject, department, phone, email, qualification, hire_date } = req.body;
   const photo = req.file ? req.file.filename : null;
 
-  db.run(`INSERT INTO teachers (teacher_id, first_name, last_name, subject, department, phone, email, qualification, photo, hire_date)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [teacher_id, first_name, last_name, subject, department, phone, email, qualification, photo, hire_date],
+  db.run(`INSERT INTO teachers (user_id, teacher_id, first_name, last_name, subject, department, phone, email, qualification, photo, hire_date)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [req.user.id, teacher_id, first_name, last_name, subject, department, phone, email, qualification, photo, hire_date],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
       res.status(201).json({ id: this.lastID, ...req.body, photo });
@@ -775,18 +824,51 @@ app.put('/api/attendance/:id', authenticateToken, (req, res) => {
 });
 
 // Application routes
-app.post('/api/applications', (req, res) => {
-  const { first_name, last_name, date_of_birth, gender, previous_school, parent_name, parent_phone, parent_email, address, stream_preference, class_level } = req.body;
+app.post('/api/applications', upload.single('photo'), (req, res) => {
+  const { first_name, last_name, date_of_birth, gender, previous_school, parent_name, parent_phone, parent_email, address, stream_preference, class_level, amount_paid } = req.body;
   const application_number = 'APP' + Date.now();
+  const photo = req.file ? req.file.filename : null;
+  const amountPaidValue = amount_paid ? parseFloat(amount_paid) : null;
 
-  db.run(`INSERT INTO applications (application_number, first_name, last_name, date_of_birth, gender, previous_school, parent_name, parent_phone, parent_email, address, stream_preference, class_level)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [application_number, first_name, last_name, date_of_birth, gender, previous_school, parent_name, parent_phone, parent_email, address, stream_preference, class_level],
+  db.run(`INSERT INTO applications (application_number, first_name, last_name, date_of_birth, gender, previous_school, parent_name, parent_phone, parent_email, address, stream_preference, class_level, photo, amount_paid)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [application_number, first_name, last_name, date_of_birth, gender, previous_school, parent_name, parent_phone, parent_email, address, stream_preference, class_level, photo, amountPaidValue],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
-      res.status(201).json({ id: this.lastID, application_number });
+      res.status(201).json({
+        id: this.lastID,
+        application_number,
+        photo_url: photo ? `/uploads/${photo}` : null
+      });
     }
   );
+});
+
+// Delete an application (self-service "undo" for a mistaken submission).
+// Matches the same trust model as the status-check endpoint: knowing the
+// application number is enough, since applicants get that number right
+// after submitting and it isn't otherwise guessable/enumerable in the UI.
+app.delete('/api/applications/:number', (req, res) => {
+  db.get('SELECT id, photo FROM applications WHERE application_number = ?', [req.params.number], (err, application) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!application) return res.status(404).json({ error: 'Application not found' });
+
+    db.run('DELETE FROM applications WHERE application_number = ?', [req.params.number], function(deleteErr) {
+      if (deleteErr) return res.status(500).json({ error: deleteErr.message });
+
+      // Clean up the uploaded photo file, if any, since it's now orphaned.
+      if (application.photo) {
+        const photoPath = path.join(__dirname, 'uploads', application.photo);
+        fs.unlink(photoPath, (unlinkErr) => {
+          if (unlinkErr && unlinkErr.code !== 'ENOENT') {
+            console.error('Could not delete application photo file:', unlinkErr.message);
+          }
+        });
+      }
+
+      res.json({ message: 'Application deleted successfully' });
+    });
+  });
 });
 
 app.get('/api/applications/:number', (req, res) => {
@@ -926,43 +1008,52 @@ app.get('/api/assignments/:id', authenticateToken, (req, res) => {
   );
 });
 
-app.post('/api/assignments', upload.single('file'), (req, res) => {
+app.post('/api/assignments', authenticateToken, upload.single('file'), (req, res) => {
   console.log('Creating assignment with data:', req.body);
   console.log('File:', req.file);
 
   const { teacher_name, subject_name, subject_id, class_level, stream, title, description, due_date, total_marks } = req.body;
   const file_path = req.file ? req.file.filename : null;
 
-  // For demo purposes, use teacher_id = 1 if no authentication
-  const teacherId = 1;
-
-  db.run(`INSERT INTO assignments (teacher_id, teacher_name, subject_id, subject_name, class_level, stream, title, description, file_path, due_date, total_marks)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [teacherId, teacher_name, subject_id, subject_name, class_level, stream, title, description, file_path, due_date, total_marks],
-    function(err) {
-      if (err) {
-        console.error('Error creating assignment:', err.message);
-        return res.status(500).json({ error: err.message });
-      }
-
-      console.log('Assignment created with ID:', this.lastID);
-
-      // Notify students in the class
-      db.all('SELECT user_id FROM students WHERE class_level = ? AND (stream = ? OR stream = "both")',
-        [class_level, stream],
-        (err, students) => {
-          if (!err && students && students.length > 0) {
-            students.forEach(student => {
-              db.run('INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
-                [student.user_id, 'New Assignment', `${title} - Due: ${due_date}`, 'assignment']);
-            });
-          }
-        }
-      );
-
-      res.status(201).json({ id: this.lastID });
+  // Resolve the real teacher row for whoever is logged in, instead of
+  // hardcoding teacher_id = 1 (which silently attributed every
+  // assignment to the same teacher regardless of who created it).
+  db.get('SELECT id FROM teachers WHERE user_id = ?', [req.user.id], (teacherErr, teacherRow) => {
+    if (teacherErr) return res.status(500).json({ error: teacherErr.message });
+    if (!teacherRow) {
+      return res.status(403).json({ error: 'No teacher profile is linked to this account.' });
     }
-  );
+
+    const teacherId = teacherRow.id;
+
+    db.run(`INSERT INTO assignments (teacher_id, teacher_name, subject_id, subject_name, class_level, stream, title, description, file_path, due_date, total_marks)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [teacherId, teacher_name, subject_id, subject_name, class_level, stream, title, description, file_path, due_date, total_marks],
+      function(err) {
+        if (err) {
+          console.error('Error creating assignment:', err.message);
+          return res.status(500).json({ error: err.message });
+        }
+
+        console.log('Assignment created with ID:', this.lastID);
+
+        // Notify students in the class
+        db.all('SELECT user_id FROM students WHERE class_level = ? AND (stream = ? OR stream = "both")',
+          [class_level, stream],
+          (notifyErr, students) => {
+            if (!notifyErr && students && students.length > 0) {
+              students.forEach(student => {
+                db.run('INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
+                  [student.user_id, 'New Assignment', `${title} - Due: ${due_date}`, 'assignment']);
+              });
+            }
+          }
+        );
+
+        res.status(201).json({ id: this.lastID });
+      }
+    );
+  });
 });
 
 app.get('/api/assignments/:id/submissions', authenticateToken, (req, res) => {
@@ -988,12 +1079,43 @@ app.post('/api/assignments/:id/submit', authenticateToken, upload.single('file')
     if (err) return res.status(500).json({ error: err.message });
     if (!student) return res.status(404).json({ error: 'Student not found' });
 
-    // Check if already submitted
-    db.get('SELECT id FROM assignment_submissions WHERE assignment_id = ? AND student_id = ?',
+    // Check for an existing submission
+    db.get('SELECT id, status, file_path FROM assignment_submissions WHERE assignment_id = ? AND student_id = ?',
       [req.params.id, student.id],
       (err, existing) => {
         if (err) return res.status(500).json({ error: err.message });
-        if (existing) return res.status(400).json({ error: 'Already submitted' });
+
+        // If the teacher requested changes, allow the student to resubmit
+        // by updating the existing row instead of blocking a second submission.
+        if (existing) {
+          if (existing.status !== 'rejected') {
+            return res.status(400).json({ error: 'You have already submitted this assignment.' });
+          }
+
+          const updatedFilePath = file_path || existing.file_path;
+
+          return db.run(
+            `UPDATE assignment_submissions
+             SET submission_text = ?, file_path = ?, status = 'submitted', marks = NULL, grade = NULL, feedback = NULL, submitted_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [submission_text, updatedFilePath, existing.id],
+            function(updateErr) {
+              if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+              db.get('SELECT user_id FROM assignments a JOIN teachers t ON a.teacher_id = t.id WHERE a.id = ?',
+                [req.params.id],
+                (notifyErr, assignment) => {
+                  if (!notifyErr && assignment) {
+                    db.run('INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
+                      [assignment.user_id, 'Assignment Resubmitted', 'A student resubmitted an assignment after requested changes', 'general']);
+                  }
+                }
+              );
+
+              res.json({ id: existing.id, message: 'Resubmitted successfully' });
+            }
+          );
+        }
 
         db.run(`INSERT INTO assignment_submissions (assignment_id, student_id, submission_text, file_path)
                 VALUES (?, ?, ?, ?)`,
@@ -1020,29 +1142,61 @@ app.post('/api/assignments/:id/submit', authenticateToken, upload.single('file')
   });
 });
 
-app.put('/api/assignments/:id', upload.single('file'), (req, res) => {
+app.put('/api/assignments/:id', authenticateToken, upload.single('file'), (req, res) => {
   const { teacher_name, subject_name, subject_id, class_level, stream, title, description, due_date, total_marks } = req.body;
   const file_path = req.file ? req.file.filename : null;
 
-  const updateQuery = file_path
-    ? `UPDATE assignments SET teacher_name = ?, subject_id = ?, subject_name = ?, class_level = ?, stream = ?, title = ?, description = ?, file_path = ?, due_date = ?, total_marks = ? WHERE id = ?`
-    : `UPDATE assignments SET teacher_name = ?, subject_id = ?, subject_name = ?, class_level = ?, stream = ?, title = ?, description = ?, due_date = ?, total_marks = ? WHERE id = ?`;
+  // Only the teacher who created this assignment (or an admin) may edit it.
+  db.get(
+    `SELECT a.teacher_id, t.user_id FROM assignments a LEFT JOIN teachers t ON a.teacher_id = t.id WHERE a.id = ?`,
+    [req.params.id],
+    (lookupErr, assignment) => {
+      if (lookupErr) return res.status(500).json({ error: lookupErr.message });
+      if (!assignment) return res.status(404).json({ error: 'Assignment not found' });
 
-  const params = file_path
-    ? [teacher_name, subject_id, subject_name, class_level, stream, title, description, file_path, due_date, total_marks, req.params.id]
-    : [teacher_name, subject_id, subject_name, class_level, stream, title, description, due_date, total_marks, req.params.id];
+      const isOwner = assignment.user_id === req.user.id;
+      const isAdmin = req.user.role === 'admin';
+      if (!isOwner && !isAdmin) {
+        return res.status(403).json({ error: 'You can only edit assignments you created.' });
+      }
 
-  db.run(updateQuery, params, function(err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ message: 'Assignment updated successfully' });
-  });
+      const updateQuery = file_path
+        ? `UPDATE assignments SET teacher_name = ?, subject_id = ?, subject_name = ?, class_level = ?, stream = ?, title = ?, description = ?, file_path = ?, due_date = ?, total_marks = ? WHERE id = ?`
+        : `UPDATE assignments SET teacher_name = ?, subject_id = ?, subject_name = ?, class_level = ?, stream = ?, title = ?, description = ?, due_date = ?, total_marks = ? WHERE id = ?`;
+
+      const params = file_path
+        ? [teacher_name, subject_id, subject_name, class_level, stream, title, description, file_path, due_date, total_marks, req.params.id]
+        : [teacher_name, subject_id, subject_name, class_level, stream, title, description, due_date, total_marks, req.params.id];
+
+      db.run(updateQuery, params, function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ message: 'Assignment updated successfully' });
+      });
+    }
+  );
 });
 
 app.delete('/api/assignments/:id', authenticateToken, (req, res) => {
-  db.run('DELETE FROM assignments WHERE id = ?', [req.params.id], function(err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ message: 'Assignment deleted successfully' });
-  });
+  // Only the teacher who created this assignment (or an admin) may delete it.
+  db.get(
+    `SELECT a.teacher_id, t.user_id FROM assignments a LEFT JOIN teachers t ON a.teacher_id = t.id WHERE a.id = ?`,
+    [req.params.id],
+    (lookupErr, assignment) => {
+      if (lookupErr) return res.status(500).json({ error: lookupErr.message });
+      if (!assignment) return res.status(404).json({ error: 'Assignment not found' });
+
+      const isOwner = assignment.user_id === req.user.id;
+      const isAdmin = req.user.role === 'admin';
+      if (!isOwner && !isAdmin) {
+        return res.status(403).json({ error: 'You can only delete assignments you created.' });
+      }
+
+      db.run('DELETE FROM assignments WHERE id = ?', [req.params.id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ message: 'Assignment deleted successfully' });
+      });
+    }
+  );
 });
 
 app.put('/api/assignments/:id/grade', authenticateToken, (req, res) => {
