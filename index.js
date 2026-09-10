@@ -11,6 +11,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const nodemailer = require('nodemailer');
 const OpenAI = require('openai');
+const { AccessToken, RoomServiceClient, WebhookReceiver } = require('livekit-server-sdk');
 
 dotenv.config();
 
@@ -21,6 +22,98 @@ const io = socketIo(server, {
     origin: process.env.FRONTEND_URL || process.env.CLIENTURL || process.env.CLIENT_URL || "http://localhost:5173",
     methods: ["GET", "POST"],
     credentials: true
+  }
+});
+
+// ============================================================
+// LiveKit (real WebRTC video) setup
+// ============================================================
+// LiveKit is a self-hosted, open-source SFU (Selective Forwarding Unit) —
+// this is what actually carries audio/video between participants. This
+// backend never touches the media itself; it only issues signed tokens
+// that say who a user is and what they're allowed to do in a room
+// (publish camera/mic, or view only), and receives webhooks to log
+// attendance. See SETUP.md for how to run the LiveKit server itself
+// (docker-compose.yml / livekit.yaml).
+//
+// Required .env vars:
+//   LIVEKIT_WS_URL=ws://localhost:7880        (wss://your-domain in production)
+//   LIVEKIT_HTTP_URL=http://localhost:7880    (https://your-domain in production)
+//   LIVEKIT_API_KEY=...
+//   LIVEKIT_API_SECRET=...
+// ============================================================
+
+const LIVEKIT_WS_URL = process.env.LIVEKIT_WS_URL || 'ws://localhost:7880';
+const LIVEKIT_HTTP_URL = process.env.LIVEKIT_HTTP_URL || 'http://localhost:7880';
+const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY;
+const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET;
+
+if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
+  console.warn('LIVEKIT_API_KEY / LIVEKIT_API_SECRET are not set — /api/livekit routes will fail.');
+}
+
+const livekitRoomService = new RoomServiceClient(LIVEKIT_HTTP_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
+const livekitWebhookReceiver = new WebhookReceiver(LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
+
+// The existing video_sessions.meeting_id doubles as the LiveKit room name.
+function livekitRoomNameFor(meetingId) {
+  return `class_${meetingId}`;
+}
+
+async function buildLivekitToken({ identity, name, roomName, canPublish }) {
+  const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, { identity, name, ttl: '10h' });
+  at.addGrant({
+    roomJoin: true,
+    room: roomName,
+    canPublish,
+    canSubscribe: true,
+    canPublishData: true
+  });
+  return at.toJwt();
+}
+
+// ---- LiveKit webhook: real join/leave events -> attendance table ----
+// IMPORTANT: this route needs the RAW request body to verify LiveKit's
+// signature, so it's registered here with express.raw(), BEFORE
+// app.use(express.json()) runs below. If you ever move this route after
+// the json() middleware, the signature check will start failing because
+// the body will already have been parsed into an object.
+app.post('/api/livekit/webhook', express.raw({ type: 'application/webhook+json' }), async (req, res) => {
+  try {
+    const event = await livekitWebhookReceiver.receive(req.body, req.get('Authorization'));
+    const userId = Number(String(event.participant?.identity || '').replace('user-', ''));
+    const meetingId = String(event.room?.name || '').replace('class_', '');
+    if (!userId || !meetingId) return res.status(200).send('ignored');
+
+    if (event.event === 'participant_joined') {
+      db.get('SELECT id FROM students WHERE user_id = ?', [userId], (err, student) => {
+        if (err || !student) return;
+        db.get('SELECT id FROM video_sessions WHERE meeting_id = ?', [meetingId], (e2, session) => {
+          if (e2 || !session) return;
+          db.run(
+            `INSERT INTO attendance (student_id, session_id, join_time, status)
+             VALUES (?, ?, datetime('now'), 'present')`,
+            [student.id, session.id]
+          );
+        });
+      });
+    }
+
+    if (event.event === 'participant_left') {
+      db.get('SELECT id FROM students WHERE user_id = ?', [userId], (err, student) => {
+        if (err || !student) return;
+        db.run(
+          `UPDATE attendance SET leave_time = datetime('now')
+           WHERE student_id = ? AND leave_time IS NULL`,
+          [student.id]
+        );
+      });
+    }
+
+    res.status(200).send('ok');
+  } catch (e) {
+    console.error('LiveKit webhook error:', e);
+    res.status(400).send('invalid webhook');
   }
 });
 
@@ -456,6 +549,140 @@ function authenticateToken(req, res, next) {
   });
 }
 
+// ============================================================
+// LiveKit routes — real video join / promote / demote / end
+// (defined here, right after authenticateToken, since they need it)
+// ============================================================
+
+// ---- Join a class session: issue a role-scoped LiveKit token ----
+app.post('/api/livekit/join', authenticateToken, (req, res) => {
+  const { meetingId } = req.body;
+  if (!meetingId) return res.status(400).json({ error: 'meetingId is required' });
+
+  db.get(
+    `SELECT vs.*, t.user_id as teacher_user_id
+     FROM video_sessions vs
+     JOIN teachers t ON vs.teacher_id = t.id
+     WHERE vs.meeting_id = ?`,
+    [meetingId],
+    async (err, session) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!session) return res.status(404).json({ error: 'Session not found' });
+
+      const roomName = livekitRoomNameFor(meetingId);
+      const isTeacher = session.teacher_user_id === req.user.id;
+
+      try {
+        // Auto-create the room on first join. No-op (safely ignored) if it
+        // already exists — that's normal once students start arriving.
+        await livekitRoomService
+          .createRoom({
+            name: roomName,
+            emptyTimeout: 600,
+            maxParticipants: 3000, // raise further with a multi-node LiveKit deployment, see SETUP.md
+            metadata: JSON.stringify({ videoSessionId: session.id })
+          })
+          .catch(() => {});
+
+        const identity = `user-${req.user.id}`;
+
+        const token = await buildLivekitToken({
+          identity,
+          name: req.user.email,
+          roomName,
+          canPublish: isTeacher // students join as viewers; promoted via /promote below
+        });
+
+        if (isTeacher) {
+          db.run('UPDATE video_sessions SET status = "live" WHERE id = ?', [session.id]);
+        }
+
+        res.json({ token, wsUrl: LIVEKIT_WS_URL, roomName, identity, isTeacher });
+      } catch (e) {
+        console.error('LiveKit join error:', e);
+        res.status(500).json({ error: 'Could not create a video session token' });
+      }
+    }
+  );
+});
+
+// ---- Teacher promotes a raised hand to on-camera ----
+app.post('/api/livekit/promote', authenticateToken, async (req, res) => {
+  const { meetingId, studentUserId } = req.body;
+  if (!meetingId || !studentUserId) {
+    return res.status(400).json({ error: 'meetingId and studentUserId are required' });
+  }
+
+  db.get(
+    `SELECT vs.id, t.user_id as teacher_user_id
+     FROM video_sessions vs JOIN teachers t ON vs.teacher_id = t.id
+     WHERE vs.meeting_id = ?`,
+    [meetingId],
+    async (err, session) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!session) return res.status(404).json({ error: 'Session not found' });
+      if (session.teacher_user_id !== req.user.id) {
+        return res.status(403).json({ error: 'Only the session teacher can promote participants' });
+      }
+
+      const roomName = livekitRoomNameFor(meetingId);
+      const identity = `user-${studentUserId}`;
+
+      try {
+        // Live permission upgrade — LiveKit pushes this to the student's
+        // existing connection. No reconnect / new token needed on their end.
+        await livekitRoomService.updateParticipant(roomName, identity, {
+          permission: { canPublish: true, canSubscribe: true, canPublishData: true }
+        });
+
+        io.to(roomName).emit('livekit-promoted', { identity, userId: studentUserId });
+        res.json({ message: 'Promoted to on-camera' });
+      } catch (e) {
+        console.error('Promote error:', e);
+        res.status(500).json({ error: 'Could not promote participant' });
+      }
+    }
+  );
+});
+
+// ---- Teacher revokes on-camera access ----
+app.post('/api/livekit/demote', authenticateToken, async (req, res) => {
+  const { meetingId, studentUserId } = req.body;
+  if (!meetingId || !studentUserId) {
+    return res.status(400).json({ error: 'meetingId and studentUserId are required' });
+  }
+
+  const roomName = livekitRoomNameFor(meetingId);
+  const identity = `user-${studentUserId}`;
+
+  try {
+    await livekitRoomService.updateParticipant(roomName, identity, {
+      permission: { canPublish: false, canSubscribe: true, canPublishData: true }
+    });
+    io.to(roomName).emit('livekit-demoted', { identity, userId: studentUserId });
+    res.json({ message: 'Removed from camera' });
+  } catch (e) {
+    console.error('Demote error:', e);
+    res.status(500).json({ error: 'Could not demote participant' });
+  }
+});
+
+// ---- Teacher ends the session for everyone ----
+app.post('/api/livekit/end', authenticateToken, async (req, res) => {
+  const { meetingId } = req.body;
+  if (!meetingId) return res.status(400).json({ error: 'meetingId is required' });
+
+  const roomName = livekitRoomNameFor(meetingId);
+  try {
+    await livekitRoomService.deleteRoom(roomName); // disconnects every participant immediately
+    db.run('UPDATE video_sessions SET status = "completed" WHERE meeting_id = ?', [meetingId]);
+    res.json({ message: 'Session ended' });
+  } catch (e) {
+    console.error('End session error:', e);
+    res.status(500).json({ error: 'Could not end session' });
+  }
+});
+
 // Student routes
 app.get('/api/students/me', authenticateToken, (req, res) => {
   db.get('SELECT * FROM students WHERE user_id = ?', [req.user.id], (err, student) => {
@@ -587,6 +814,38 @@ app.post('/api/subjects', authenticateToken, (req, res) => {
 });
 
 // Marks routes
+app.get('/api/marks', authenticateToken, (req, res) => {
+  db.get('SELECT id FROM teachers WHERE user_id = ?', [req.user.id], (err, teacher) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!teacher) return res.status(404).json({ error: 'Teacher not found' });
+
+    const { term, year } = req.query;
+    let query = `SELECT m.*, s.name as subject_name, s.code as subject_code,
+                  st.first_name as student_first_name, st.last_name as student_last_name,
+                  st.student_id as student_student_id
+                  FROM marks m
+                  JOIN subjects s ON m.subject_id = s.id
+                  JOIN students st ON m.student_id = st.id
+                  WHERE m.teacher_id = ?`;
+    const params = [teacher.id];
+
+    if (term) {
+      query += ' AND m.term = ?';
+      params.push(term);
+    }
+
+    if (year) {
+      query += ' AND m.year = ?';
+      params.push(year);
+    }
+
+    db.all(query, params, (err, marks) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(marks);
+    });
+  });
+});
+
 app.get('/api/marks/student/:studentId', authenticateToken, (req, res) => {
   const { term, year } = req.query;
   let query = `SELECT m.*, s.name as subject_name, s.code as subject_code, t.first_name as teacher_first_name,
@@ -772,17 +1031,27 @@ app.get('/api/video-sessions', authenticateToken, (req, res) => {
 });
 
 app.post('/api/video-sessions', authenticateToken, (req, res) => {
-  const { title, description, teacher_id, subject_id, class_level, scheduled_date, duration } = req.body;
-  const meeting_id = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+  const { title, description, subject_id, class_level, scheduled_date, duration } = req.body;
 
-  db.run(`INSERT INTO video_sessions (title, description, teacher_id, subject_id, class_level, scheduled_date, duration, meeting_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [title, description, teacher_id, subject_id, class_level, scheduled_date, duration, meeting_id],
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.status(201).json({ id: this.lastID, meeting_id });
+  // Get teacher_id from authenticated user
+  db.get('SELECT id FROM teachers WHERE user_id = ?', [req.user.id], (err, teacher) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!teacher) {
+      console.log('User', req.user.id, 'does not have a teacher profile');
+      return res.status(403).json({ error: 'Only teachers can create sessions. Please complete your teacher profile first.' });
     }
-  );
+
+    const meeting_id = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
+    db.run(`INSERT INTO video_sessions (title, description, teacher_id, subject_id, class_level, scheduled_date, duration, meeting_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [title, description, teacher.id, subject_id || null, class_level, scheduled_date, duration, meeting_id],
+      function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.status(201).json({ id: this.lastID, meeting_id });
+      }
+    );
+  });
 });
 
 app.put('/api/video-sessions/:id/status', authenticateToken, (req, res) => {
