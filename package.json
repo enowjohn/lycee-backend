@@ -19,7 +19,10 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "livekit-server-sdk": "^2.19.0",
+<<<<<<< HEAD
     "mongoose": "^8.24.4",
+=======
+>>>>>>> b130befc30fa3777e51e4b5a7c7bbb4d504520c7
     "multer": "^2.3.0",
     "nodemailer": "^9.1.1",
     "openai": "^7.10.0",
