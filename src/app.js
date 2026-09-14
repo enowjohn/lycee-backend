@@ -28,7 +28,7 @@ const app = express();
 const corsOrigin = process.env.FRONTEND_URL || process.env.CLIENTURL || process.env.CLIENT_URL || 'http://localhost:5173';
 
 app.use(cors({
-  origin: corsOrigin,
+  origin: [corsOrigin, 'https://lycee-frontend.vercel.app', 'http://localhost:5173'],
   credentials: true
 }));
 app.use(express.json());
