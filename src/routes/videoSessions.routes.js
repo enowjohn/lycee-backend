@@ -1,7 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
-const { VideoSession } = require('../models');
-const authenticateToken = require('../middleware/auth');
+const { VideoSession, Teacher } = require('../models');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -37,13 +37,22 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authenticateToken, requireRole('teacher', 'admin'), async (req, res) => {
   try {
-    const { title, description, teacher_id, subject_id, class_level, scheduled_date, duration } = req.body;
+    const { title, description, subject_id, class_level, scheduled_date, duration } = req.body;
+
+    // Resolve the teacher from the logged-in user instead of trusting a
+    // client-supplied teacher_id, which would let anyone schedule a
+    // session under someone else's name.
+    const teacher = await Teacher.findOne({ user_id: req.user.id });
+    if (!teacher) {
+      return res.status(403).json({ error: 'Only teachers can create sessions. Please complete your teacher profile first.' });
+    }
+
     const meeting_id = 'session_' + Date.now() + '_' + crypto.randomBytes(5).toString('hex');
 
     const session = await VideoSession.create({
-      title, description, teacher_id, subject_id, class_level, scheduled_date, duration, meeting_id
+      title, description, teacher_id: teacher._id, subject_id: subject_id || null, class_level, scheduled_date, duration, meeting_id
     });
 
     res.status(201).json({ id: session._id, meeting_id });

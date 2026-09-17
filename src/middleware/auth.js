@@ -13,4 +13,18 @@ function authenticateToken(req, res, next) {
   });
 }
 
+// Must run after authenticateToken (needs req.user.role). Returns 403 for
+// any authenticated user whose role isn't in the allowed list, instead of
+// silently letting e.g. a student create teacher/marks/announcement records.
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'You do not have permission to perform this action' });
+    }
+    next();
+  };
+}
+
 module.exports = authenticateToken;
+module.exports.authenticateToken = authenticateToken;
+module.exports.requireRole = requireRole;

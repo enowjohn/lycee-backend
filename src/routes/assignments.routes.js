@@ -1,6 +1,6 @@
 const express = require('express');
 const { Assignment, AssignmentSubmission, Student, Teacher, Notification } = require('../models');
-const authenticateToken = require('../middleware/auth');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
 const router = express.Router();
@@ -74,25 +74,26 @@ router.get('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-router.post('/', upload.single('file'), async (req, res) => {
+router.post('/', authenticateToken, requireRole('teacher', 'admin'), upload.single('file'), async (req, res) => {
   try {
     console.log('Creating assignment with data:', req.body);
     console.log('File:', req.file);
 
-    const { teacher_name, subject_name, subject_id, class_level, stream, title, description, due_date, total_marks } = req.body;
+    const { subject_name, subject_id, class_level, stream, title, description, due_date, total_marks } = req.body;
     const file_path = req.file ? req.file.filename : null;
 
-    // No auth on this route (matches original); fall back to any teacher
-    // record when the caller doesn't supply one, since the original demo
-    // fallback (a hardcoded integer id) can't map onto a Mongo ObjectId.
-    let teacherId = req.body.teacher_id;
-    if (!teacherId) {
-      const fallbackTeacher = await Teacher.findOne();
-      teacherId = fallbackTeacher ? fallbackTeacher._id : undefined;
+    // Resolve the real teacher row for whoever is logged in, instead of
+    // trusting a client-supplied teacher_id (which let anyone attribute
+    // an assignment to any teacher).
+    const teacherRow = await Teacher.findOne({ user_id: req.user.id });
+    if (!teacherRow) {
+      return res.status(403).json({ error: 'No teacher profile is linked to this account.' });
     }
 
     const assignment = await Assignment.create({
-      teacher_id: teacherId, teacher_name, subject_id, subject_name, class_level, stream,
+      teacher_id: teacherRow._id,
+      teacher_name: `${teacherRow.first_name} ${teacherRow.last_name}`,
+      subject_id, subject_name, class_level, stream,
       title, description, file_path, due_date, total_marks
     });
 
@@ -147,7 +148,36 @@ router.post('/:id/submit', authenticateToken, upload.single('file'), async (req,
     if (!student) return res.status(404).json({ error: 'Student not found' });
 
     const existing = await AssignmentSubmission.findOne({ assignment_id: req.params.id, student_id: student._id });
-    if (existing) return res.status(400).json({ error: 'Already submitted' });
+
+    // If the teacher requested changes, let the student resubmit by
+    // updating the existing row instead of blocking a second submission.
+    if (existing) {
+      if (existing.status !== 'rejected') {
+        return res.status(400).json({ error: 'You have already submitted this assignment.' });
+      }
+
+      await AssignmentSubmission.findByIdAndUpdate(existing._id, {
+        submission_text,
+        file_path: file_path || existing.file_path,
+        status: 'submitted',
+        marks: null,
+        grade: null,
+        feedback: null,
+        submitted_at: new Date()
+      });
+
+      const assignment = await Assignment.findById(req.params.id).populate('teacher_id', 'user_id');
+      if (assignment && assignment.teacher_id) {
+        await Notification.create({
+          user_id: assignment.teacher_id.user_id,
+          title: 'Assignment Resubmitted',
+          message: 'A student resubmitted an assignment after requested changes',
+          type: 'general'
+        });
+      }
+
+      return res.json({ id: existing._id, message: 'Resubmitted successfully' });
+    }
 
     const submission = await AssignmentSubmission.create({
       assignment_id: req.params.id, student_id: student._id, submission_text, file_path
@@ -170,10 +200,19 @@ router.post('/:id/submit', authenticateToken, upload.single('file'), async (req,
   }
 });
 
-router.put('/:id', upload.single('file'), async (req, res) => {
+router.put('/:id', authenticateToken, upload.single('file'), async (req, res) => {
   try {
     const { teacher_name, subject_name, subject_id, class_level, stream, title, description, due_date, total_marks } = req.body;
     const file_path = req.file ? req.file.filename : null;
+
+    // Only the teacher who created this assignment (or an admin) may edit it.
+    const assignment = await Assignment.findById(req.params.id).populate('teacher_id');
+    if (!assignment) return res.status(404).json({ error: 'Assignment not found' });
+
+    const isOwner = assignment.teacher_id && String(assignment.teacher_id.user_id) === String(req.user.id);
+    if (!isOwner && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'You can only edit assignments you created.' });
+    }
 
     const update = { teacher_name, subject_id, subject_name, class_level, stream, title, description, due_date, total_marks };
     if (file_path) update.file_path = file_path;
@@ -187,6 +226,15 @@ router.put('/:id', upload.single('file'), async (req, res) => {
 
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
+    // Only the teacher who created this assignment (or an admin) may delete it.
+    const assignment = await Assignment.findById(req.params.id).populate('teacher_id');
+    if (!assignment) return res.status(404).json({ error: 'Assignment not found' });
+
+    const isOwner = assignment.teacher_id && String(assignment.teacher_id.user_id) === String(req.user.id);
+    if (!isOwner && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'You can only delete assignments you created.' });
+    }
+
     await Assignment.findByIdAndDelete(req.params.id);
     res.json({ message: 'Assignment deleted successfully' });
   } catch (error) {
@@ -194,7 +242,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-router.put('/:id/grade', authenticateToken, async (req, res) => {
+router.put('/:id/grade', authenticateToken, requireRole('teacher', 'admin'), async (req, res) => {
   try {
     const { submission_id, marks, grade, feedback, status } = req.body;
 

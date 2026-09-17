@@ -1,6 +1,6 @@
 const express = require('express');
 const { Event } = require('../models');
-const authenticateToken = require('../middleware/auth');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -15,7 +15,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authenticateToken, requireRole('admin', 'teacher'), async (req, res) => {
   try {
     const { title, description, event_date, event_time, location, type } = req.body;
     const event = await Event.create({ title, description, event_date, event_time, location, type });

@@ -1,6 +1,6 @@
 const express = require('express');
-const { Mark } = require('../models');
-const authenticateToken = require('../middleware/auth');
+const { Mark, Teacher } = require('../models');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -19,6 +19,29 @@ function flattenMark(mark) {
   };
 }
 
+// A teacher's own entered marks (used by the staff dashboard). Must stay
+// registered before '/student/:studentId' would only matter if paths
+// collided; they don't, but keep this first for readability.
+router.get('/', authenticateToken, requireRole('teacher', 'admin'), async (req, res) => {
+  try {
+    const teacher = await Teacher.findOne({ user_id: req.user.id });
+    if (!teacher) return res.status(404).json({ error: 'Teacher not found' });
+
+    const { term, year } = req.query;
+    const filter = { teacher_id: teacher._id };
+    if (term) filter.term = term;
+    if (year) filter.year = Number(year);
+
+    const marks = await Mark.find(filter)
+      .populate('subject_id', 'name code')
+      .populate('student_id', 'first_name last_name student_id');
+
+    res.json(marks.map(flattenMark));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get('/student/:studentId', authenticateToken, async (req, res) => {
   try {
     const { term, year } = req.query;
@@ -36,7 +59,7 @@ router.get('/student/:studentId', authenticateToken, async (req, res) => {
   }
 });
 
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authenticateToken, requireRole('teacher', 'admin'), async (req, res) => {
   try {
     const { student_id, subject_id, teacher_id, term, year, assignment_marks, mid_term_marks, final_marks, comments } = req.body;
 

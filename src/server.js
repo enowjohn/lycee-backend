@@ -13,6 +13,7 @@ const io = socketIo(server, {
   }
 });
 
+app.set('io', io);
 registerSocketHandlers(io);
 
 const PORT = process.env.PORT || 5000;

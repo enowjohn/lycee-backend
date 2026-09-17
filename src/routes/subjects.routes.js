@@ -1,6 +1,6 @@
 const express = require('express');
 const { Subject } = require('../models');
-const authenticateToken = require('../middleware/auth');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -13,7 +13,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authenticateToken, requireRole('admin', 'teacher'), async (req, res) => {
   try {
     const { name, code, stream, class_level, description } = req.body;
     const subject = await Subject.create({ name, code, stream, class_level, description });

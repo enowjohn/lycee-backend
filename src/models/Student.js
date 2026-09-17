@@ -3,6 +3,9 @@ const { applyJsonOptions } = require('./schemaOptions');
 
 const studentSchema = new mongoose.Schema({
   user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  // Auto-linked to a parent's User account when their email matches
+  // parent_email below, so a parent login can find their own child(ren).
+  parent_user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   student_id: { type: String, required: true, unique: true },
   first_name: { type: String, required: true },
   last_name: { type: String, required: true },
