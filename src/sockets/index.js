@@ -21,10 +21,30 @@ function registerSocketHandlers(io) {
 
     socket.on('raise-hand', (data) => {
       io.to(data.sessionId).emit('raise-hand', data);
+      // The class UI listens for 'hand-raised' to show the teacher a list.
+      io.to(data.sessionId).emit('hand-raised', data);
+    });
+
+    socket.on('new-poll', (data) => {
+      socket.to(data.sessionId).emit('new-poll', data);
+    });
+
+    socket.on('poll-response', (data) => {
+      io.to(data.sessionId).emit('poll-response', data);
     });
 
     socket.on('screen-share', (data) => {
       socket.to(data.sessionId).emit('screen-share', data);
+    });
+
+    // "X is typing." relayed to the recipient's personal room.
+    socket.on('typing', (data) => {
+      if (!data) return;
+      if (data.receiverId) {
+        io.to(String(data.receiverId)).emit('typing', data);
+      } else if (data.classLevel) {
+        socket.to(`class_${data.classLevel}`).emit('typing', data);
+      }
     });
 
     // Private messaging room

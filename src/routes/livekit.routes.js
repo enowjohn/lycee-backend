@@ -1,13 +1,13 @@
 const express = require('express');
-const { VideoSession } = require('../models');
+const { VideoSession, User } = require('../models');
 const authenticateToken = require('../middleware/auth');
 const { roomService, roomNameFor, buildToken, LIVEKIT_WS_URL } = require('../services/livekit');
 
 const router = express.Router();
 
-// ---- Join a class session: issue a role-scoped LiveKit token ----
-// Teacher gets canPublish immediately; a student joins view-only and is
-// promoted on-camera later via /promote once they raise their hand.
+// ---- Join a class session: issue a LiveKit token ----
+// Everyone in the class may publish (Meet-style); the client starts the
+// teacher on camera automatically and lets students enable theirs.
 router.post('/join', authenticateToken, async (req, res) => {
   const { meetingId } = req.body;
   if (!meetingId) return res.status(400).json({ error: 'meetingId is required' });
@@ -28,15 +28,31 @@ router.post('/join', authenticateToken, async (req, res) => {
     }).catch(() => {});
 
     const identity = `user-${req.user.id}`;
+
+    // Friendly display name for the video tile (the JWT only carries email).
+    const dbUser = await User.findById(req.user.id).select('first_name last_name email');
+    const displayName = dbUser
+      ? `${dbUser.first_name || ''} ${dbUser.last_name || ''}`.trim() || dbUser.email
+      : req.user.email;
+
     const token = await buildToken({
       identity,
-      name: req.user.email,
+      name: displayName,
       roomName,
-      canPublish: isTeacher
+      // Everyone in a class may publish (turn on mic/camera) — Meet-style.
+      canPublish: true
     });
 
     if (isTeacher && session.status === 'scheduled') {
       await VideoSession.findByIdAndUpdate(session._id, { status: 'live' });
+      // Let the whole class know in real time that the lesson started.
+      req.app.get('io')
+        ?.to(`class_${session.class_level}`)
+        .emit('session-live', {
+          meetingId: session.meeting_id,
+          title: session.title,
+          classLevel: session.class_level
+        });
     }
 
     res.json({ token, wsUrl: LIVEKIT_WS_URL, roomName, identity, isTeacher });
@@ -56,7 +72,7 @@ router.post('/promote', authenticateToken, async (req, res) => {
   try {
     const session = await VideoSession.findOne({ meeting_id: meetingId }).populate('teacher_id');
     if (!session) return res.status(404).json({ error: 'Session not found' });
-    if (String(session.teacher_id.user_id) !== String(req.user.id)) {
+    if (!session.teacher_id || String(session.teacher_id.user_id) !== String(req.user.id)) {
       return res.status(403).json({ error: 'Only the session teacher can promote participants' });
     }
 
@@ -67,10 +83,9 @@ router.post('/promote', authenticateToken, async (req, res) => {
       permission: { canPublish: true, canSubscribe: true, canPublishData: true }
     });
 
-    // Socket.io clients join a room named after the plain meetingId (see
-    // sockets/index.js's 'join-session' handler), not the LiveKit room
-    // name (which is prefixed with "class_") — emit to that one instead.
-    req.app.get('io')?.to(meetingId).emit('livekit-promoted', { identity, userId: studentUserId });
+    // Socket.io clients join a room named after the LiveKit room
+    // (class_<meetingId>) — see the client's join-session call.
+    req.app.get('io')?.to(roomName).emit('livekit-promoted', { identity, userId: studentUserId });
     res.json({ message: 'Promoted to on-camera' });
   } catch (error) {
     console.error('Promote error:', error);
@@ -88,7 +103,7 @@ router.post('/demote', authenticateToken, async (req, res) => {
   try {
     const session = await VideoSession.findOne({ meeting_id: meetingId }).populate('teacher_id');
     if (!session) return res.status(404).json({ error: 'Session not found' });
-    if (String(session.teacher_id.user_id) !== String(req.user.id)) {
+    if (!session.teacher_id || String(session.teacher_id.user_id) !== String(req.user.id)) {
       return res.status(403).json({ error: 'Only the session teacher can demote participants' });
     }
 
@@ -99,7 +114,7 @@ router.post('/demote', authenticateToken, async (req, res) => {
       permission: { canPublish: false, canSubscribe: true, canPublishData: true }
     });
 
-    req.app.get('io')?.to(meetingId).emit('livekit-demoted', { identity, userId: studentUserId });
+    req.app.get('io')?.to(roomName).emit('livekit-demoted', { identity, userId: studentUserId });
     res.json({ message: 'Removed from camera' });
   } catch (error) {
     console.error('Demote error:', error);
@@ -115,7 +130,7 @@ router.post('/end', authenticateToken, async (req, res) => {
   try {
     const session = await VideoSession.findOne({ meeting_id: meetingId }).populate('teacher_id');
     if (!session) return res.status(404).json({ error: 'Session not found' });
-    if (String(session.teacher_id.user_id) !== String(req.user.id)) {
+    if (!session.teacher_id || String(session.teacher_id.user_id) !== String(req.user.id)) {
       return res.status(403).json({ error: 'Only the session teacher can end this session' });
     }
 

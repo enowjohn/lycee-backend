@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 
+const { corsOrigin } = require('./config/cors');
 const { Student, VideoSession, Attendance } = require('./models');
 const { webhookReceiver } = require('./services/livekit');
 
@@ -24,11 +25,10 @@ const contactRoutes = require('./routes/contact.routes');
 const assignmentsRoutes = require('./routes/assignments.routes');
 const statisticsRoutes = require('./routes/statistics.routes');
 const aiRoutes = require('./routes/ai.routes');
+const usersRoutes = require('./routes/users.routes');
 const livekitRoutes = require('./routes/livekit.routes');
 
 const app = express();
-
-const corsOrigin = process.env.FRONTEND_URL || process.env.CLIENTURL || process.env.CLIENT_URL || 'http://localhost:5173';
 
 // LiveKit webhook: real join/leave events -> attendance records.
 // IMPORTANT: needs the RAW request body to verify LiveKit's signature, so
@@ -73,9 +73,24 @@ app.post('/api/livekit/webhook', express.raw({ type: 'application/webhook+json' 
 });
 
 app.use(cors({
-  origin: [corsOrigin, 'https://lycee-frontend.vercel.app', 'http://localhost:5173'],
+  origin: corsOrigin,
   credentials: true
 }));
+
+// Simple uptime check used by Render and by the frontend to confirm that
+// the API (and the fee schedule it enforces) is reachable.
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime_seconds: Math.round(process.uptime()),
+    timestamp: new Date().toISOString(),
+    fees: {
+      junior: { label: 'Form 1 - Form 5', amount: 42700 },
+      senior: { label: 'Lower Sixth - Upper Sixth (LSS-USS)', amount: 47300 }
+    }
+  });
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -99,6 +114,7 @@ app.use('/api/contact', contactRoutes);
 app.use('/api/assignments', assignmentsRoutes);
 app.use('/api/statistics', statisticsRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/users', usersRoutes);
 app.use('/api/livekit', livekitRoutes);
 
 module.exports = app;

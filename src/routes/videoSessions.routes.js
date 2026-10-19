@@ -1,6 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
-const { VideoSession, Teacher } = require('../models');
+const { VideoSession, Teacher, Notification } = require('../models');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
@@ -56,6 +56,55 @@ router.post('/', authenticateToken, requireRole('teacher', 'admin'), async (req,
     });
 
     res.status(201).json({ id: session._id, meeting_id });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ---- Add people to a class (Google-Meet-style invites) ----
+// Creates an in-app notification for each invitee and pushes a real-time
+// 'live-invite' event so anyone online sees it immediately.
+router.post('/:meetingId/invite', authenticateToken, async (req, res) => {
+  try {
+    const { userIds } = req.body;
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({ error: 'Select at least one person to invite.' });
+    }
+
+    const session = await VideoSession.findOne({ meeting_id: req.params.meetingId });
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    const base = (process.env.FRONTEND_URL || 'https://gbhsombessa.site')
+      .split(',')[0]
+      .trim()
+      .replace(/\/$/, '');
+    const link = `${base}/live-class?meetingId=${encodeURIComponent(session.meeting_id)}`;
+
+    const io = req.app.get('io');
+    const invited = [];
+
+    for (const userId of userIds) {
+      // Skip malformed ids instead of failing the whole batch.
+      if (!userId || !String(userId).match(/^[a-f0-9]{24}$/i)) continue;
+
+      await Notification.create({
+        user_id: userId,
+        title: 'Live class invitation',
+        message: `You are invited to "${session.title}". Join here: ${link}`,
+        type: 'live'
+      });
+
+      invited.push(String(userId));
+      io?.to(String(userId)).emit('live-invite', {
+        meetingId: session.meeting_id,
+        title: session.title,
+        classLevel: session.class_level,
+        link,
+        invitedBy: req.user.email
+      });
+    }
+
+    res.json({ invited: invited.length, link });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

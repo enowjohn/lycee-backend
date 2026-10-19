@@ -5,9 +5,7 @@ const authenticateToken = require('../middleware/auth');
 
 const router = express.Router();
 
-// NOTE: preserves original route order — '/:userId' is registered before
-// '/conversations', so a request to /api/messages/conversations still
-// matches the ':userId' handler first (pre-existing behavior, unchanged).
+// ---- All messages involving the signed-in user ----
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -36,6 +34,7 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
+// ---- Send a message via REST (the live app normally uses sockets) ----
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { receiver_id, subject, message } = req.body;
@@ -55,24 +54,9 @@ router.post('/', authenticateToken, async (req, res) => {
   }
 });
 
-router.get('/:userId', authenticateToken, async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const currentUserId = req.user.id;
-
-    const messages = await Message.find({
-      $or: [
-        { sender_id: currentUserId, receiver_id: userId },
-        { sender_id: userId, receiver_id: currentUserId }
-      ]
-    }).sort({ created_at: 1 });
-
-    res.json(messages);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
+// IMPORTANT: '/conversations' must be registered BEFORE '/:userId',
+// otherwise Express matches it as a userId (the old bug that made the
+// conversation list empty).
 router.get('/conversations', authenticateToken, async (req, res) => {
   try {
     const currentUserId = new mongoose.Types.ObjectId(req.user.id);
@@ -90,17 +74,45 @@ router.get('/conversations', authenticateToken, async (req, res) => {
           }
         }
       },
+      { $sort: { created_at: -1 } },
       {
         $group: {
           _id: '$other_user_id',
-          last_message_time: { $max: '$created_at' }
+          last_message: { $first: '$message' },
+          last_message_time: { $first: '$created_at' }
         }
       },
       { $sort: { last_message_time: -1 } },
-      { $project: { _id: 0, other_user_id: '$_id', last_message_time: 1 } }
+      {
+        $project: {
+          _id: 0,
+          other_user_id: '$_id',
+          last_message: 1,
+          last_message_time: 1
+        }
+      }
     ]);
 
     res.json(conversations);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ---- Full thread with one contact ----
+router.get('/:userId', authenticateToken, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.user.id;
+
+    const messages = await Message.find({
+      $or: [
+        { sender_id: currentUserId, receiver_id: userId },
+        { sender_id: userId, receiver_id: currentUserId }
+      ]
+    }).sort({ created_at: 1 });
+
+    res.json(messages);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

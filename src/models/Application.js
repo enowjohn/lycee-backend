@@ -14,6 +14,19 @@ const applicationSchema = new mongoose.Schema({
   address: String,
   stream_preference: { type: String, enum: ['english', 'french'] },
   class_level: String,
+  // Uploaded passport photo, stored as a URL under /uploads.
+  photo: String,
+  // Fee + payment tracking. The fee is computed server-side from the class
+  // level (never trusted from the client).
+  fee_amount: { type: Number, default: null },
+  fee_label: String,
+  amount_paid: { type: Number, default: 0 },
+  balance: { type: Number, default: null },
+  payment_status: { type: String, default: 'unpaid', enum: ['unpaid', 'partial', 'paid'] },
+  payment_method: String,
+  payment_reference: String,
+  receipt_number: String,
+  paid_at: Date,
   status: { type: String, default: 'pending', enum: ['pending', 'under_review', 'accepted', 'rejected'] },
   submitted_at: { type: Date, default: Date.now },
   updated_at: { type: Date, default: Date.now }
