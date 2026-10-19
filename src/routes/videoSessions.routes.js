@@ -1,6 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
-const { VideoSession, Teacher, Notification } = require('../models');
+const { VideoSession, Teacher, Notification, User } = require('../models');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
@@ -43,10 +43,23 @@ router.post('/', authenticateToken, requireRole('teacher', 'admin'), async (req,
 
     // Resolve the teacher from the logged-in user instead of trusting a
     // client-supplied teacher_id, which would let anyone schedule a
-    // session under someone else's name.
-    const teacher = await Teacher.findOne({ user_id: req.user.id });
+    // session under someone else's name. If the account has no teacher
+    // profile yet (e.g. a freshly registered teacher, or an admin hosting a
+    // class), create one on the fly so "Create Session" is not a dead end.
+    let teacher = await Teacher.findOne({ user_id: req.user.id });
     if (!teacher) {
-      return res.status(403).json({ error: 'Only teachers can create sessions. Please complete your teacher profile first.' });
+      const account = await User.findById(req.user.id).select('first_name last_name email');
+      if (!account) {
+        return res.status(403).json({ error: 'Your account could not be found. Please log in again.' });
+      }
+      teacher = await Teacher.create({
+        user_id: account._id,
+        teacher_id: 'TCH' + Date.now().toString(36).toUpperCase(),
+        first_name: account.first_name || 'Teacher',
+        last_name: account.last_name || 'Staff',
+        subject: 'General',
+        email: account.email
+      });
     }
 
     const meeting_id = 'session_' + Date.now() + '_' + crypto.randomBytes(5).toString('hex');
