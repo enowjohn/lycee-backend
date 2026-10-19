@@ -1,10 +1,10 @@
-const express = require('express');
+﻿const express = require('express');
 const { Student, Teacher, Subject, VideoSession } = require('../models');
-const authenticateToken = require('../middleware/auth');
 
 const router = express.Router();
 
-router.get('/', authenticateToken, async (req, res) => {
+// Public, read-only counters used by the home page. No sensitive data.
+router.get('/', async (req, res) => {
   try {
     const [students, teachers, subjects, sessions] = await Promise.all([
       Student.countDocuments({ status: 'active' }),
@@ -20,3 +20,4 @@ router.get('/', authenticateToken, async (req, res) => {
 });
 
 module.exports = router;
+
